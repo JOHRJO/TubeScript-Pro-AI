@@ -1,12 +1,17 @@
+
 import React, { useState, useEffect } from 'react';
-import { TemplateType, GeneratedScript, SeoData, GenerationRequest } from './types';
-import { generateScript, generateSeo } from './services/geminiService';
+import { TemplateType, GeneratedScript, SeoData, GenerationRequest, HistoryItem } from './types';
+import { generateScript, generateSeo, login } from './services/geminiService';
 import ScriptOutput from './components/ScriptOutput';
 import SeoOutput from './components/SeoOutput';
 import { Icons } from './components/Icons';
 
 const App: React.FC = () => {
-  // State
+  const [isAuthenticated, setIsAuthenticated] = useState(!!localStorage.getItem('ts_token'));
+  const [email, setEmail] = useState('');
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+
+  // App States
   const [activeTemplate, setActiveTemplate] = useState<TemplateType | null>(null);
   const [topic, setTopic] = useState('');
   const [productName, setProductName] = useState('');
@@ -15,11 +20,69 @@ const App: React.FC = () => {
   const [audience, setAudience] = useState('Débutants');
   
   const [isGenerating, setIsGenerating] = useState(false);
+  const [progress, setProgress] = useState(0);
   const [scriptResult, setScriptResult] = useState<GeneratedScript | null>(null);
   const [seoResult, setSeoResult] = useState<SeoData | null>(null);
   const [activeTab, setActiveTab] = useState<'script' | 'seo'>('script');
 
-  // Handlers
+  // History State
+  const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  useEffect(() => {
+    const savedHistory = localStorage.getItem('ts_history');
+    if (savedHistory) setHistory(JSON.parse(savedHistory));
+  }, []);
+
+  useEffect(() => {
+    let interval: any;
+    if (isGenerating) {
+      setProgress(0);
+      interval = setInterval(() => {
+        setProgress(prev => {
+          if (prev >= 98) return prev;
+          return prev + (100 / 80); // Simulation sur 80s
+        });
+      }, 1000);
+    } else {
+      setProgress(100);
+    }
+    return () => clearInterval(interval);
+  }, [isGenerating]);
+
+  const saveToHistory = (script: GeneratedScript, seo: SeoData, topicText: string) => {
+    const newItem: HistoryItem = {
+      id: Math.random().toString(36).substr(2, 9),
+      timestamp: Date.now(),
+      script,
+      seo,
+      topic: topicText
+    };
+    const updatedHistory = [newItem, ...history].slice(0, 5); // Garder les 5 derniers
+    setHistory(updatedHistory);
+    localStorage.setItem('ts_history', JSON.stringify(updatedHistory));
+  };
+
+  const deleteHistoryItem = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const updatedHistory = history.filter(item => item.id !== id);
+    setHistory(updatedHistory);
+    localStorage.setItem('ts_history', JSON.stringify(updatedHistory));
+  };
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoggingIn(true);
+    try {
+      await login(email);
+      setIsAuthenticated(true);
+    } catch (err) {
+      alert("Erreur de connexion");
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
   const handleGenerate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeTemplate || !topic) return;
@@ -39,266 +102,248 @@ const App: React.FC = () => {
     };
 
     try {
-      // 1. Generate Script
       const script = await generateScript(request);
-      setScriptResult(script);
-
-      // 2. Generate SEO (in parallel or sequence - sequence is safer for context)
-      // Construct context from script summary safely
       const sections = script.sections || [];
-      const context = sections.map(s => s.content).join(' ').substring(0, 1500);
-      
+      const context = sections.map(s => s.content).join(' ').substring(0, 1000);
       const seo = await generateSeo(request, context);
+      
+      setScriptResult(script);
       setSeoResult(seo);
-
-    } catch (error) {
-      alert("Une erreur est survenue lors de la génération. Vérifiez votre clé API ou réessayez.");
-      console.error(error);
+      saveToHistory(script, seo, topic);
+    } catch (error: any) {
+      alert(error.message || "Une erreur est survenue.");
+      if (error.message === "Session invalide") {
+        localStorage.removeItem('ts_token');
+        setIsAuthenticated(false);
+      }
     } finally {
       setIsGenerating(false);
     }
   };
 
-  const reset = () => {
-    setActiveTemplate(null);
-    setScriptResult(null);
-    setSeoResult(null);
-    setTopic('');
+  const loadFromHistory = (item: HistoryItem) => {
+    setScriptResult(item.script);
+    setSeoResult(item.seo);
+    setTopic(item.topic);
+    setIsSidebarOpen(false);
   };
 
-  // UI Components
-  const TemplateCard = ({ type, icon, desc }: { type: TemplateType, icon: React.ReactNode, desc: string }) => (
-    <button
-      onClick={() => setActiveTemplate(type)}
-      className="flex flex-col items-center p-8 bg-slate-800 border border-slate-700 rounded-2xl hover:bg-slate-750 hover:border-brand-500 hover:scale-105 transition-all duration-300 group text-center h-full w-full"
-    >
-      <div className="p-4 bg-slate-900 rounded-full mb-4 group-hover:text-brand-500 text-slate-300 transition-colors">
-        {icon}
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-6">
+        <div className="bg-slate-800 p-8 rounded-2xl border border-slate-700 w-full max-w-md shadow-2xl">
+          <div className="flex flex-col items-center mb-8">
+             <div className="w-12 h-12 bg-brand-600 rounded-xl flex items-center justify-center text-white font-bold text-2xl mb-4">T</div>
+             <h1 className="text-2xl font-bold text-white">Connexion à TubeScript</h1>
+             <p className="text-slate-400 text-sm mt-2">Accédez à votre générateur de scripts AI</p>
+          </div>
+          <form onSubmit={handleLogin} className="space-y-4">
+            <input 
+              type="email" 
+              required 
+              placeholder="Votre email" 
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white outline-none focus:ring-2 focus:ring-brand-500"
+            />
+            <button 
+              type="submit" 
+              disabled={isLoggingIn}
+              className="w-full bg-brand-600 hover:bg-brand-500 text-white font-bold py-3 rounded-lg transition-colors flex justify-center"
+            >
+              {isLoggingIn ? "Connexion..." : "Continuer"}
+            </button>
+          </form>
+        </div>
       </div>
-      <h3 className="text-xl font-bold text-white mb-2">{type.split('(')[0]}</h3>
-      <p className="text-slate-400 text-sm">{desc}</p>
-    </button>
-  );
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-slate-900 text-slate-200 font-sans selection:bg-brand-900 selection:text-white">
-      {/* Header */}
+    <div className="min-h-screen bg-slate-900 text-slate-200">
+      {/* Sidebar Historique */}
+      {isSidebarOpen && (
+        <div className="fixed inset-0 z-[100] bg-slate-900/80 backdrop-blur-sm" onClick={() => setIsSidebarOpen(false)}>
+          <div className="absolute right-0 top-0 h-full w-80 bg-slate-800 border-l border-slate-700 p-6 shadow-2xl animate-slide-in" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-8">
+              <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                <Icons.History className="w-5 h-5 text-brand-400" /> Historique
+              </h2>
+              <button onClick={() => setIsSidebarOpen(false)} className="text-slate-400 hover:text-white">✕</button>
+            </div>
+            <div className="space-y-4">
+              {history.length === 0 ? (
+                <p className="text-slate-500 text-sm text-center py-10">Aucun script récent.</p>
+              ) : (
+                history.map(item => (
+                  <div key={item.id} onClick={() => loadFromHistory(item)} className="group bg-slate-900 p-4 rounded-xl border border-slate-700 hover:border-brand-500 cursor-pointer transition-all relative">
+                    <button onClick={(e) => deleteHistoryItem(item.id, e)} className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-500 p-1">
+                      <Icons.Trash className="w-3 h-3" />
+                    </button>
+                    <h4 className="font-bold text-white text-sm line-clamp-1 pr-4">{item.script.title}</h4>
+                    <p className="text-xs text-slate-500 mt-1 line-clamp-2">{item.topic}</p>
+                    <span className="text-[10px] text-slate-600 mt-2 block italic">{new Date(item.timestamp).toLocaleString()}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       <header className="bg-slate-900/80 backdrop-blur-md border-b border-slate-800 sticky top-0 z-50">
         <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2 cursor-pointer" onClick={reset}>
+          <div className="flex items-center gap-2 cursor-pointer" onClick={() => setActiveTemplate(null)}>
             <div className="w-8 h-8 bg-brand-600 rounded-lg flex items-center justify-center text-white font-bold">T</div>
-            <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-400">
-              TubeScript Pro AI
-            </h1>
+            <h1 className="text-xl font-bold text-white">TubeScript Pro AI</h1>
           </div>
-          <div className="text-xs text-slate-500 border border-slate-800 px-3 py-1 rounded-full hidden sm:block">
-            Powered by Gemini 2.5
+          <div className="flex items-center gap-4">
+            <button onClick={() => setIsSidebarOpen(true)} className="p-2 text-slate-400 hover:text-white bg-slate-800 rounded-lg transition-colors border border-slate-700">
+              <Icons.History className="w-5 h-5" />
+            </button>
+            <button onClick={() => { localStorage.removeItem('ts_token'); setIsAuthenticated(false); }} className="text-xs text-slate-500 hover:text-white">Déconnexion</button>
           </div>
         </div>
       </header>
 
       <main className="max-w-6xl mx-auto px-6 py-10">
-        {/* View 1: Template Selection */}
-        {!activeTemplate && (
+        {!activeTemplate ? (
           <div className="animate-fade-in">
-            <div className="text-center mb-12">
-              <h2 className="text-4xl font-bold text-white mb-4">Que voulez-vous créer aujourd'hui ?</h2>
-              <p className="text-slate-400 text-lg max-w-2xl mx-auto">
-                Sélectionnez un modèle optimisé pour commencer à générer vos scripts et métadonnées sans effort.
-              </p>
-            </div>
-            
+            <h2 className="text-3xl font-bold text-center mb-10 text-white">Choisissez votre type de vidéo</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              <TemplateCard 
-                type={TemplateType.KDP} 
-                icon={<Icons.BookOpen className="w-8 h-8" />}
-                desc="Trailers de livres, lectures d'extraits, bios d'auteurs pour Amazon KDP."
-              />
-              <TemplateCard 
-                type={TemplateType.AFFILIATE} 
-                icon={<Icons.DollarSign className="w-8 h-8" />}
-                desc="Revues de produits, comparaisons, top 10 pour maximiser les clics."
-              />
-              <TemplateCard 
-                type={TemplateType.TUTORIAL} 
-                icon={<Icons.GraduationCap className="w-8 h-8" />}
-                desc="Guides étape par étape, how-to et contenu éducatif clair."
-              />
-              <TemplateCard 
-                type={TemplateType.GENERAL} 
-                icon={<Icons.Video className="w-8 h-8" />}
-                desc="Vlogs, storytelling et contenu généraliste viral."
-              />
+              <button onClick={() => setActiveTemplate(TemplateType.KDP)} className="group p-8 bg-slate-800 border border-slate-700 rounded-2xl hover:border-brand-500 transition-all text-center">
+                  <Icons.BookOpen className="w-10 h-10 mx-auto mb-4 text-brand-400 group-hover:scale-110 transition-transform" />
+                  <h3 className="font-bold text-white">KDP (Livres)</h3>
+                  <p className="text-xs text-slate-500 mt-2">Trailers de livres & promotion KDP</p>
+              </button>
+              <button onClick={() => setActiveTemplate(TemplateType.AFFILIATE)} className="group p-8 bg-slate-800 border border-slate-700 rounded-2xl hover:border-brand-500 transition-all text-center">
+                  <Icons.DollarSign className="w-10 h-10 mx-auto mb-4 text-brand-400 group-hover:scale-110 transition-transform" />
+                  <h3 className="font-bold text-white">Affiliation</h3>
+                  <p className="text-xs text-slate-500 mt-2">Revue de produits & marketing</p>
+              </button>
+              <button onClick={() => setActiveTemplate(TemplateType.TUTORIAL)} className="group p-8 bg-slate-800 border border-slate-700 rounded-2xl hover:border-brand-500 transition-all text-center">
+                  <Icons.GraduationCap className="w-10 h-10 mx-auto mb-4 text-brand-400 group-hover:scale-110 transition-transform" />
+                  <h3 className="font-bold text-white">Tutoriel</h3>
+                  <p className="text-xs text-slate-500 mt-2">Éducation & step-by-step</p>
+              </button>
+              <button onClick={() => setActiveTemplate(TemplateType.GENERAL)} className="group p-8 bg-slate-800 border border-slate-700 rounded-2xl hover:border-brand-500 transition-all text-center">
+                  <Icons.Video className="w-10 h-10 mx-auto mb-4 text-brand-400 group-hover:scale-110 transition-transform" />
+                  <h3 className="font-bold text-white">Général</h3>
+                  <p className="text-xs text-slate-500 mt-2">Vlog, Divertissement & News</p>
+              </button>
             </div>
           </div>
-        )}
-
-        {/* View 2: Generator Workspace */}
-        {activeTemplate && (
+        ) : (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 animate-fade-in">
-            
-            {/* Left Column: Inputs */}
-            <div className="lg:col-span-4 space-y-6">
+            <div className="lg:col-span-4">
               <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 sticky top-24">
-                <div className="flex items-center justify-between mb-6">
-                   <h3 className="text-lg font-bold text-white">Configuration</h3>
-                   <button onClick={() => setActiveTemplate(null)} className="text-xs text-slate-400 hover:text-white underline">Changer</button>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="font-bold text-white flex items-center gap-2">
+                    <Icons.Edit className="w-4 h-4 text-brand-400" /> Configuration
+                  </h3>
+                  <button onClick={() => setActiveTemplate(null)} className="text-xs text-brand-500 hover:underline">Changer Type</button>
                 </div>
-
                 <form onSubmit={handleGenerate} className="space-y-5">
                   <div>
-                    <label className="block text-sm font-medium text-slate-400 mb-1">Modèle</label>
-                    <div className="bg-slate-900 px-3 py-2 rounded border border-slate-700 text-brand-400 text-sm font-semibold">
-                      {activeTemplate}
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-slate-400 mb-1">Sujet de la vidéo <span className="text-brand-500">*</span></label>
+                    <label className="text-xs text-slate-400 font-bold uppercase mb-2 block">Sujet de la vidéo</label>
                     <textarea 
                       required
                       value={topic}
                       onChange={(e) => setTopic(e.target.value)}
-                      placeholder="ex: Comment dresser un chien en 10 minutes..."
-                      className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white focus:ring-2 focus:ring-brand-500 focus:border-transparent outline-none transition-all min-h-[100px]"
+                      placeholder="Décrivez votre sujet en détail..."
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white outline-none min-h-[120px] focus:ring-2 focus:ring-brand-500"
                     />
                   </div>
-
-                  {(activeTemplate === TemplateType.KDP || activeTemplate === TemplateType.AFFILIATE) && (
-                    <div>
-                      <label className="block text-sm font-medium text-slate-400 mb-1">Nom du Produit / Livre</label>
-                      <input 
-                        type="text"
-                        value={productName}
-                        onChange={(e) => setProductName(e.target.value)}
-                        placeholder="ex: iPhone 15 Pro, Le Seigneur des Anneaux..."
-                        className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white focus:ring-2 focus:ring-brand-500 outline-none"
-                      />
-                    </div>
-                  )}
 
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-sm font-medium text-slate-400 mb-1">Langue</label>
-                      <select 
-                        value={language} 
-                        onChange={(e) => setLanguage(e.target.value)}
-                        className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none"
-                      >
-                        <option>Français</option>
-                        <option>Anglais</option>
-                        <option>Espagnol</option>
-                        <option>Allemand</option>
+                      <label className="text-xs text-slate-400 font-bold uppercase mb-2 block">Ton</label>
+                      <select value={tone} onChange={e => setTone(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-xs text-white">
+                        <option>Engageant</option>
+                        <option>Professionnel</option>
+                        <option>Humoristique</option>
+                        <option>Inspirant</option>
                       </select>
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-slate-400 mb-1">Ton</label>
-                      <select 
-                         value={tone} 
-                         onChange={(e) => setTone(e.target.value)}
-                         className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-white text-sm focus:ring-2 focus:ring-brand-500 outline-none"
-                      >
-                        <option>Engageant et Professionnel</option>
-                        <option>Humoristique et Fun</option>
-                        <option>Sérieux et Éducatif</option>
-                        <option>Inspirant et Émotionnel</option>
-                        <option>Urgent (Vente)</option>
+                      <label className="text-xs text-slate-400 font-bold uppercase mb-2 block">Audience</label>
+                      <select value={audience} onChange={e => setAudience(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-xs text-white">
+                        <option>Débutants</option>
+                        <option>Experts</option>
+                        <option>Générale</option>
                       </select>
                     </div>
-                  </div>
-
-                   <div>
-                    <label className="block text-sm font-medium text-slate-400 mb-1">Public Cible</label>
-                    <input 
-                      type="text"
-                      value={audience}
-                      onChange={(e) => setAudience(e.target.value)}
-                      placeholder="ex: Débutants, Parents, Experts..."
-                      className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white focus:ring-2 focus:ring-brand-500 outline-none"
-                    />
                   </div>
 
                   <button 
                     type="submit" 
                     disabled={isGenerating || !topic}
-                    className={`w-full py-3 px-4 rounded-lg font-bold text-white flex items-center justify-center gap-2 transition-all ${
-                      isGenerating || !topic
-                        ? 'bg-slate-700 cursor-not-allowed text-slate-400' 
-                        : 'bg-gradient-to-r from-brand-600 to-brand-500 hover:from-brand-500 hover:to-brand-400 shadow-lg shadow-brand-900/20'
-                    }`}
+                    className="w-full py-4 bg-brand-600 hover:bg-brand-500 rounded-xl font-bold text-white disabled:bg-slate-700 transition-all shadow-lg flex items-center justify-center gap-2"
                   >
-                    {isGenerating ? (
-                      <>
-                        <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                        Analyse en cours...
-                      </>
-                    ) : (
-                      <>
-                        <Icons.Wand2 className="w-5 h-5" />
-                        Générer le Script
-                      </>
-                    )}
+                    {isGenerating ? <Icons.Loader className="w-5 h-5 animate-spin" /> : <Icons.Video className="w-5 h-5" />}
+                    {isGenerating ? "Génération..." : "Générer mon Script"}
                   </button>
                 </form>
               </div>
             </div>
 
-            {/* Right Column: Results */}
             <div className="lg:col-span-8">
-               {/* Default State */}
-               {!scriptResult && !isGenerating && (
-                 <div className="h-full flex flex-col items-center justify-center text-slate-500 border-2 border-dashed border-slate-800 rounded-2xl min-h-[400px] bg-slate-800/20 p-8 text-center">
-                   <Icons.Wand2 className="w-16 h-16 mb-4 opacity-20" />
-                   <p className="text-lg">Remplissez le formulaire à gauche pour générer votre contenu.</p>
-                   <p className="text-sm mt-2 opacity-60">L'IA générera un script détaillé et des métadonnées SEO.</p>
-                 </div>
-               )}
-
-               {/* Loading State */}
                {isGenerating && (
-                 <div className="h-full flex flex-col items-center justify-center rounded-2xl min-h-[400px]">
-                    <div className="relative w-24 h-24 mb-6">
-                      <div className="absolute inset-0 border-4 border-slate-700 rounded-full"></div>
-                      <div className="absolute inset-0 border-4 border-t-brand-500 border-r-transparent border-b-transparent border-l-transparent rounded-full animate-spin"></div>
+                 <div className="bg-slate-800 p-8 rounded-2xl border border-slate-700 mb-6">
+                    <div className="flex justify-between items-center mb-4">
+                      <span className="text-sm font-bold text-brand-400">Génération en cours...</span>
+                      <span className="text-xs text-slate-500">Estimation: ~80s</span>
                     </div>
-                    <h3 className="text-xl font-bold text-white animate-pulse">Création de la magie...</h3>
-                    <p className="text-slate-400 mt-2">Rédaction du script et optimisation SEO en cours.</p>
+                    <div className="w-full bg-slate-900 rounded-full h-3 overflow-hidden border border-slate-700">
+                      <div className="bg-brand-600 h-full rounded-full transition-all duration-1000" style={{ width: `${progress}%` }}></div>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-3 italic">L'IA de TubeScript analyse votre sujet et structure les séquences...</p>
                  </div>
                )}
 
-               {/* Results State */}
-               {scriptResult && !isGenerating && (
-                 <div className="bg-slate-800/30 backdrop-blur-sm rounded-2xl border border-slate-700/50 overflow-hidden">
-                    {/* Tabs */}
-                    <div className="flex border-b border-slate-700">
-                      <button 
-                        onClick={() => setActiveTab('script')}
-                        className={`flex-1 py-4 text-center font-bold text-sm uppercase tracking-wider transition-colors ${activeTab === 'script' ? 'bg-slate-800 text-brand-400 border-b-2 border-brand-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
-                      >
-                        📜 Script Vidéo
+               {scriptResult ? (
+                 <div className="bg-slate-800/30 rounded-2xl border border-slate-700/50 overflow-hidden shadow-2xl">
+                    <div className="flex border-b border-slate-700 bg-slate-800/50">
+                      <button onClick={() => setActiveTab('script')} className={`flex-1 py-4 text-sm font-bold flex items-center justify-center gap-2 transition-all ${activeTab === 'script' ? 'text-brand-400 bg-brand-400/10 border-b-2 border-brand-500' : 'text-slate-400 hover:bg-slate-700'}`}>
+                        <Icons.FileText className="w-4 h-4" /> SCRIPT
                       </button>
-                      <button 
-                        onClick={() => setActiveTab('seo')}
-                        className={`flex-1 py-4 text-center font-bold text-sm uppercase tracking-wider transition-colors ${activeTab === 'seo' ? 'bg-slate-800 text-brand-400 border-b-2 border-brand-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
-                      >
-                        🔍 Métadonnées SEO
+                      <button onClick={() => setActiveTab('seo')} className={`flex-1 py-4 text-sm font-bold flex items-center justify-center gap-2 transition-all ${activeTab === 'seo' ? 'text-brand-400 bg-brand-400/10 border-b-2 border-brand-500' : 'text-slate-400 hover:bg-slate-700'}`}>
+                        <Icons.Search className="w-4 h-4" /> SEO & TAGS
                       </button>
                     </div>
-
-                    <div className="p-6 md:p-8">
+                    <div className="p-4 md:p-8">
                       {activeTab === 'script' ? (
-                        <ScriptOutput script={scriptResult} />
+                        <ScriptOutput 
+                          script={scriptResult} 
+                          seo={seoResult!} 
+                          onUpdate={(updated) => {
+                            setScriptResult(updated);
+                            // Mettre à jour l'historique aussi
+                            const newHist = history.map(h => h.script.id === updated.id ? {...h, script: updated} : h);
+                            setHistory(newHist);
+                            localStorage.setItem('ts_history', JSON.stringify(newHist));
+                          }}
+                        />
                       ) : (
-                        seoResult ? <SeoOutput seo={seoResult} /> : <div className="p-4 text-center text-slate-400">Chargement SEO...</div>
+                        <SeoOutput seo={seoResult!} />
                       )}
                     </div>
                  </div>
+               ) : !isGenerating && (
+                 <div className="h-96 flex flex-col items-center justify-center text-slate-500 border-2 border-dashed border-slate-800 rounded-3xl bg-slate-800/10 p-10 text-center">
+                    <Icons.Video className="w-16 h-16 text-slate-700 mb-4" />
+                    <h3 className="text-xl font-bold text-slate-400 mb-2">Votre chef-d'œuvre commence ici</h3>
+                    <p className="max-w-xs text-sm">Configurez les détails à gauche pour générer un script optimisé et ses métadonnées SEO.</p>
+                 </div>
                )}
             </div>
-
           </div>
         )}
       </main>
+      
+      <footer className="border-t border-slate-800 mt-20 py-10 text-center text-slate-500 text-sm">
+        <p>&copy; {new Date().getFullYear()} TubeScript Pro AI. Sécurisé avec Gemini 2.5.</p>
+      </footer>
     </div>
   );
 };

@@ -1,3 +1,4 @@
+
 export enum TemplateType {
   KDP = 'KDP (Livre & Trailer)',
   AFFILIATE = 'Marketing d\'Affiliation',
@@ -8,11 +9,13 @@ export enum TemplateType {
 export interface ScriptSection {
   title: string;
   content: string;
-  visualCue?: string; // Description visuelle pour le montage
-  duration?: string; // Estimation de la durée
+  visualCue?: string;
+  duration?: string;
 }
 
 export interface GeneratedScript {
+  id?: string;
+  timestamp?: number;
   title: string;
   sections: ScriptSection[];
   estimatedTotalDuration: string;
@@ -26,11 +29,19 @@ export interface SeoData {
   hashtags: string[];
 }
 
+export interface HistoryItem {
+  id: string;
+  timestamp: number;
+  script: GeneratedScript;
+  seo: SeoData;
+  topic: string;
+}
+
 export interface GenerationRequest {
   topic: string;
   template: TemplateType;
   language: string;
   targetAudience: string;
   tone: string;
-  productName?: string; // Pour affiliation/KDP
+  productName?: string;
 }

@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="fr">
   <head>
@@ -5,6 +6,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>TubeScript Pro AI</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://unpkg.com/docx@8.5.0/build/index.js"></script>
     <script>
       tailwind.config = {
         theme: {
@@ -22,6 +25,9 @@
                 800: '#9f1239',
                 900: '#881337',
               }
+            },
+            animation: {
+              'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
             }
           }
         }
@@ -32,7 +38,6 @@
         background-color: #0f172a; /* Slate 900 */
         color: #f8fafc; /* Slate 50 */
       }
-      /* Custom Scrollbar */
       ::-webkit-scrollbar {
         width: 8px;
         height: 8px;
@@ -46,6 +51,13 @@
       }
       ::-webkit-scrollbar-thumb:hover {
         background: #475569;
+      }
+      @keyframes progress {
+        0% { width: 0%; }
+        100% { width: 100%; }
+      }
+      .animate-progress {
+        animation: progress 80s linear forwards;
       }
     </style>
   <script type="importmap">
